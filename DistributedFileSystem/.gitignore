@@ -1,0 +1,4 @@
+/.idea/
+local_storage
+server_storage
+**/target

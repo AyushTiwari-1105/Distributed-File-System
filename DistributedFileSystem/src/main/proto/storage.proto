@@ -1,0 +1,37 @@
+syntax="proto3";
+
+option java_multiple_files=true;
+option java_package="org.example.storage";
+
+service BlockStorage{
+  rpc UploadChunk(ChunkRequest) returns (UploadResponse);
+
+  rpc CheckChunkExists(HashRequest) returns (ExistResponse);
+
+  rpc FetchChunk(HashRequest) returns (ChunkResponse);
+}
+
+message ChunkRequest{
+  string hash_id=1;
+  bytes data=2;
+}
+
+message UploadResponse{
+  bool success=1;
+  string message=2;
+}
+
+message HashRequest{
+  string hash_id=1;
+}
+
+message  ExistResponse{
+  bool exists=1;
+}
+
+message ChunkResponse{
+  bool success=1;
+  bytes data=2;
+  string message=3;
+}
+
