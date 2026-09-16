@@ -157,7 +157,13 @@ public class ChunkEngine {
 
         } catch (Exception e) {
             System.err.println("Error processing file: "+ e.getMessage());
+            executorService.shutdownNow();
 
+        }
+        finally {
+            if(!executorService.isShutdown()){
+                executorService.shutdown();
+            }
         }
 
     }
