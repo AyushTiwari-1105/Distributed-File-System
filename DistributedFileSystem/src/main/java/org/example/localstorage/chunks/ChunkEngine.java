@@ -20,6 +20,10 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 public class ChunkEngine {
@@ -46,7 +50,9 @@ public class ChunkEngine {
             return;
         }
 
-        List<String> chunkHashes= new ArrayList<>();
+        ExecutorService executorService= Executors.newFixedThreadPool(10);
+
+        List<Future<String>> orderedFutures= new ArrayList<>();
 
         try(RandomAccessFile raf= new RandomAccessFile(sourceFile,"r")){
             FileChannel fileChannel= raf.getChannel();
@@ -65,39 +71,51 @@ public class ChunkEngine {
                 byte[] hash= digest.digest();
                 String chunkHash= bytesToHex(hash);
 
-                chunkHashes.add(chunkHash);
-
                 //Sets position to 0 to start reading next block
                 buffer.rewind();
-                int bytesRead= buffer.limit();
 
-                System.out.println("Processed Chunk "+ chunkIndex+" | Hash: "+ chunkHash+ " | Size: "+bytesRead);
+                ByteString immutablePayLoad= ByteString.copyFrom(buffer);
+                final int currentIndex= chunkIndex;
 
+                Callable<String> uploadTask = ()->{
+                    System.out.println("Thread ["+ Thread.currentThread().getName() +"] checking chunk"+ currentIndex);
 
-                HashRequest hashRequest= HashRequest.newBuilder().setHashId(chunkHash).build();
-                ExistResponse existResponse= blockingStub.checkChunkExists(hashRequest);
+                    HashRequest hashRequest= HashRequest.newBuilder().setHashId(chunkHash).build();
+                    ExistResponse existResponse= blockingStub.checkChunkExists(hashRequest);
 
-                if(existResponse.getExists()){
-                    System.out.println("Server already has the uploaded chunk");
-                }
-                else{
-                    ByteString protobufBytes= ByteString.copyFrom(buffer);
-
-                    ChunkRequest chunkRequest= ChunkRequest.newBuilder().setHashId(chunkHash).setData(protobufBytes).build();
-
-                    UploadResponse uploadResponse= blockingStub.uploadChunk(chunkRequest);
-
-                    if(uploadResponse.getSuccess()){
-                        System.out.println("Upload Successful");
+                    if(existResponse.getExists()){
+                        System.out.println(" -> deduplicated chunk"+ currentIndex);
                     }
                     else{
-                        System.err.println("Upload Failed");
+                        ChunkRequest chunkRequest= ChunkRequest.newBuilder().setHashId(chunkHash).setData(immutablePayLoad).build();
+
+                        UploadResponse uploadResponse= blockingStub.uploadChunk(chunkRequest);
+
+                        if(!uploadResponse.getSuccess()){
+                            throw new RuntimeException("Upload failed for chunk "+ currentIndex);
+                        }
+                        else{
+                            System.out.println(" -> Uploaded chunk "+ currentIndex);
+                        }
                     }
-                }
+
+                    return chunkHash;
+                };
+
+                Future<String> futureHash= executorService.submit(uploadTask);
+                orderedFutures.add(futureHash);
 
                 buffer.clear();
                 chunkIndex++;
             }
+
+            List<String> chunkHashes= new ArrayList<>();
+            for(Future<String> future:orderedFutures){
+                chunkHashes.add(future.get());
+            }
+
+            System.out.println("All threads finished processing");
+            executorService.shutdown();
 
 
             System.out.println("Total chunks processed: "+ chunkIndex);
@@ -139,7 +157,13 @@ public class ChunkEngine {
 
         } catch (Exception e) {
             System.err.println("Error processing file: "+ e.getMessage());
+            executorService.shutdownNow();
 
+        }
+        finally {
+            if(!executorService.isShutdown()){
+                executorService.shutdown();
+            }
         }
 
     }
@@ -163,7 +187,7 @@ public class ChunkEngine {
     static void main(String[] args) {
         ChunkEngine chunkEngine= new ChunkEngine();
 
-        String testFilePath= "src/main/resources/Book_DigitalImageProcessing.pdf";
+        String testFilePath= "DistributedFileSystem/src/main/resources/Book_DigitalImageProcessing.pdf";
         System.out.println("Starting file slice engine...");
         long startTime = System.currentTimeMillis();
 

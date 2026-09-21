@@ -99,6 +99,10 @@ public class BlockServer {
 
             File chunkFile= new File(SERVER_STORAGE_DIR+hash+".chunk");
 
+            if(!chunkFile.getParentFile().exists()){
+                chunkFile.getParentFile().mkdirs();
+            }
+
             try(FileOutputStream fos= new FileOutputStream(chunkFile)){
                 FileChannel outputChannel= fos.getChannel();
 
