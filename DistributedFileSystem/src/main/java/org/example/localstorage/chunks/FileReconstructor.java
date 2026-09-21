@@ -27,6 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 public class FileReconstructor {
+    private final static int CHUNK_SIZE=4*1024*1024;
 
     private final ManagedChannel channel;
     private final BlockStorageGrpc.BlockStorageBlockingStub blockingStub;
@@ -139,7 +140,7 @@ public class FileReconstructor {
             ByteString chunkData= chunkResponse.getData();
             ByteBuffer chunkDataInBuffer= chunkData.asReadOnlyByteBuffer();
 
-            outChannel.write(chunkDataInBuffer,((long) index *4*1024*1024));
+            outChannel.write(chunkDataInBuffer,((long) index * CHUNK_SIZE));
             System.out.println("Added chunk "+hash+" to the file ");
 
             return hash;
