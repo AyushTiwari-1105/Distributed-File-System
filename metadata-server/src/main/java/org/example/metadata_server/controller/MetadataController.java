@@ -35,7 +35,7 @@ public class MetadataController {
     }
 
     @GetMapping("/{fileName}")
-    public ResponseEntity<FileMetaData> getMetaData(@PathVariable String fileName ){
+    public ResponseEntity<FileMetaData> getMetaData(@PathVariable("fileName") String fileName ){
         Optional<FileMetaData> metaData= repository.findById(fileName);
 
         if(metaData.isPresent()){

@@ -4,6 +4,7 @@ package org.example.localstorage.chunks;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.example.storage.BlockStorageGrpc;
 import org.example.storage.ChunkResponse;
 import org.example.storage.HashRequest;
@@ -17,8 +18,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class FileReconstructor {
 
@@ -38,6 +44,7 @@ public class FileReconstructor {
         System.out.println("Fetching metaData from control plane");
 
         String jsonResponse;
+        ExecutorService executorService= Executors.newFixedThreadPool(10);
 
         try (HttpClient httpClient = HttpClient.newHttpClient()) {
             HttpRequest httpRequest= HttpRequest.newBuilder()
@@ -70,42 +77,73 @@ public class FileReconstructor {
             }
 
             System.out.println("Downloading "+fileName+" from server...");
+            List<Future<String>> tasks=new ArrayList<>();
 
             try(FileOutputStream fos= new FileOutputStream(restoredFile)){
                 FileChannel outChannel= fos.getChannel();
 
                 for(int i=0;i<count;i++){
-                    String hash= chunkHashes.get(i);
+                    Callable<String> downloadTask = getStringCallable(chunkHashes, i, outChannel);
 
-                    HashRequest hashRequest= HashRequest.newBuilder()
-                            .setHashId(hash)
-                            .build();
+                    tasks.add(executorService.submit(downloadTask));
 
-                    ChunkResponse chunkResponse= blockingStub.fetchChunk(hashRequest);
-
-                    if(!chunkResponse.getSuccess()){
-                        System.err.println("Server missing chunk with hash: "+hash);
-                    }
-
-                    ByteString dataFromResponse= chunkResponse.getData();
-                    ByteBuffer dataInBuffer= dataFromResponse.asReadOnlyByteBuffer();
-
-                    outChannel.write(dataInBuffer);
                 }
+
+                for(Future<String> task:tasks){
+                    String hash= task.get();
+                }
+
+                executorService.shutdown();
 
             }
             catch (Exception e){
                 System.err.println("Cannot Reconstruct File");
                 e.printStackTrace();
+                executorService.shutdown();
             }
 
         } catch (InterruptedException e) {
             System.err.println("Unable to fetch metaData from control plane");
+            executorService.shutdown();
+        }
+        finally {
+            if(!executorService.isShutdown()){
+                executorService.shutdownNow();
+            }
         }
 
 
 
 
+    }
+
+    private @NonNull Callable<String> getStringCallable(List<String> chunkHashes, int i, FileChannel outChannel) {
+        String hash= chunkHashes.get(i);
+        final int index= i;
+
+
+        return ()->{
+
+            System.out.println("Processing chunk "+hash+" on thread ["+Thread.currentThread().getName()+"]");
+
+            HashRequest hashRequest= HashRequest.newBuilder()
+                    .setHashId(hash)
+                    .build();
+
+            ChunkResponse chunkResponse=blockingStub.fetchChunk(hashRequest);
+
+            if(!chunkResponse.getSuccess()){
+                System.err.println("Server missing chunk: "+hash);
+            }
+
+            ByteString chunkData= chunkResponse.getData();
+            ByteBuffer chunkDataInBuffer= chunkData.asReadOnlyByteBuffer();
+
+            outChannel.write(chunkDataInBuffer,((long) index *4*1024*1024));
+            System.out.println("Added chunk "+hash+" to the file ");
+
+            return hash;
+        };
     }
 
     public void shutdown(){
